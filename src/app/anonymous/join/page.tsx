@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, generateSessionId } from '@/utils/supabase';
+import { supabase, generateSessionId, createOrUpdateConnection, testDatabaseConnection, logSupabaseOperation } from '@/utils/supabase';
 
 export default function AnonymousJoinPage() {
   const router = useRouter();
@@ -32,6 +32,16 @@ export default function AnonymousJoinPage() {
     setError('');
 
     try {
+      logSupabaseOperation('Join Tournament - Start', { code: codeToUse });
+      
+      // Test database connection first
+      const isConnected = await testDatabaseConnection();
+      if (!isConnected) {
+        setError('Unable to connect to tournament server. Please check your internet connection.');
+        setIsJoining(false);
+        return;
+      }
+
       // Check if tournament exists and is active
       const { data: tournament, error: dbError } = await supabase
         .from('tournaments')
@@ -41,6 +51,7 @@ export default function AnonymousJoinPage() {
         .single();
 
       if (dbError || !tournament) {
+        logSupabaseOperation('Tournament Lookup', { code: codeToUse }, dbError);
         setError('Tournament not found. Please check your code.');
         setIsJoining(false);
         return;
@@ -52,24 +63,22 @@ export default function AnonymousJoinPage() {
         return;
       }
 
+      logSupabaseOperation('Tournament Found', tournament);
+
       // Generate or get session ID
       let sessionId = localStorage.getItem('anonymous_session_id');
       if (!sessionId) {
         sessionId = generateSessionId();
         localStorage.setItem('anonymous_session_id', sessionId);
+        logSupabaseOperation('Session Created', { sessionId });
+      } else {
+        logSupabaseOperation('Session Retrieved', { sessionId });
       }
 
-      // Add connection to database
-      const { error: connectionError } = await supabase
-        .from('connections')
-        .upsert({
-          tournament_id: tournament.id,
-          session_id: sessionId,
-          last_seen: new Date().toISOString()
-        });
-
-      if (connectionError) {
-        console.error('Connection error:', connectionError);
+      // Create or update connection using enhanced method
+      const connectionSuccess = await createOrUpdateConnection(tournament.id, sessionId);
+      
+      if (!connectionSuccess) {
         setError('Failed to join tournament. Please try again.');
         setIsJoining(false);
         return;
@@ -79,11 +88,13 @@ export default function AnonymousJoinPage() {
       localStorage.setItem('anonymous_tournament_id', tournament.id);
       localStorage.setItem('anonymous_tournament_code', codeToUse);
 
+      logSupabaseOperation('Join Tournament - Success', { tournamentId: tournament.id, sessionId });
+
       // Navigate to voting interface
       router.push(`/anonymous/vote/${tournament.id}`);
 
     } catch (err) {
-      console.error('Error joining tournament:', err);
+      logSupabaseOperation('Join Tournament', { code: codeToUse }, err);
       setError('Failed to join tournament. Please try again.');
       setIsJoining(false);
     }

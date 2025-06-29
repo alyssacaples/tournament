@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { GameState, Tournament, Participant } from '@/types/tournament';
 import { createTournamentBracket } from '@/utils/tournament';
-import { supabase, generateTournamentCode, getActiveConnectionCount, logSupabaseOperation, testDatabaseConnection, createRobustSubscription, cleanupSubscription } from '@/utils/supabase';
+import { supabase, generateTournamentCode } from '@/utils/supabase';
 import { SHAPE_COLOR_COMBOS } from '@/data/constants';
 
 import AnonymousModeSetup from '@/components/interactive/AnonymousModeSetup';
@@ -25,62 +25,45 @@ export default function AnonymousHostPage() {
   const [tournamentCode, setTournamentCode] = useState<string>('');
   const [connectedVoters, setConnectedVoters] = useState<number>(0);
 
-  // Load connection count with enhanced method
+  // Load connection count
   useEffect(() => {
     if (!gameState.tournament?.id) return;
 
     const loadConnectionCount = async () => {
-      try {
-        logSupabaseOperation('Connection Count Load - Start', { tournamentId: gameState.tournament!.id });
-        const count = await getActiveConnectionCount(gameState.tournament!.id);
-        setConnectedVoters(count);
-        logSupabaseOperation('Connection Count Load - Success', { count });
-      } catch (err) {
-        logSupabaseOperation('Connection Count Load', { tournamentId: gameState.tournament!.id }, err);
-      }
+      const { count } = await supabase
+        .from('connections')
+        .select('*', { count: 'exact', head: true })
+        .eq('tournament_id', gameState.tournament!.id);
+      
+      setConnectedVoters(count || 0);
     };
 
-    // Load initial count
     loadConnectionCount();
 
-    // Set up periodic refresh as fallback
-    const fallbackInterval = setInterval(loadConnectionCount, 5000); // Every 5 seconds for better responsiveness
-
-    // Subscribe to connection changes using robust subscription
-    const channel = createRobustSubscription(
-      `connections-${gameState.tournament.id}`,
-      'connections',
-      `tournament_id=eq.${gameState.tournament.id}`,
-      (payload) => {
-        logSupabaseOperation('Real-time Connection Change', payload);
-        // Immediate update
-        loadConnectionCount();
-      },
-      (status) => {
-        logSupabaseOperation('Real-time Connection Subscription Status', { 
-          status, 
-          tournamentId: gameState.tournament!.id 
-        });
-      }
-    );
+    // Subscribe to connection changes
+    const channel = supabase
+      .channel(`connections-${gameState.tournament.id}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'connections',
+          filter: `tournament_id=eq.${gameState.tournament.id}`
+        },
+        () => {
+          loadConnectionCount();
+        }
+      )
+      .subscribe();
 
     return () => {
-      clearInterval(fallbackInterval);
-      cleanupSubscription(channel, `connections-${gameState.tournament?.id || 'unknown'}`);
+      supabase.removeChannel(channel);
     };
   }, [gameState.tournament?.id]);
 
   const handleCreateTournament = async (name: string, participantNames: string[], seeded: boolean) => {
     try {
-      logSupabaseOperation('Create Tournament - Start', { name, participantCount: participantNames.length });
-      
-      // Test database connection first
-      const isConnected = await testDatabaseConnection();
-      if (!isConnected) {
-        alert('Unable to connect to tournament server. Please check your internet connection and try again.');
-        return;
-      }
-
       // Create participants with visual IDs
       const participants: Participant[] = participantNames.map((name, index) => ({
         id: `participant-${Date.now()}-${index}`,
@@ -90,7 +73,6 @@ export default function AnonymousHostPage() {
 
       // Generate tournament code
       const code = generateTournamentCode();
-      logSupabaseOperation('Tournament Code Generated', { code });
       
       // Create bracket
       const matches = createTournamentBracket(participants, seeded);
@@ -122,22 +104,16 @@ export default function AnonymousHostPage() {
           current_match_id: null,
           round_duration: tournament.roundDuration,
           max_participants: participants.length,
-          timer_active: false,
-          timer_remaining: tournament.roundDuration,
-          timer_started_at: null,
-          timer_duration: tournament.roundDuration,
           host_last_seen: new Date().toISOString()
         })
         .select()
         .single();
 
       if (error) {
-        logSupabaseOperation('Create Tournament', tournament, error);
+        console.error('Error creating tournament:', error);
         alert('Failed to create tournament. Please try again.');
         return;
       }
-
-      logSupabaseOperation('Create Tournament - Success', data);
 
       // Update tournament with database ID
       tournament.id = data.id;
@@ -153,7 +129,7 @@ export default function AnonymousHostPage() {
       setCurrentScreen('bracket');
 
     } catch (error) {
-      logSupabaseOperation('Create Tournament', { name, participantNames }, error);
+      console.error('Error creating tournament:', error);
       alert('Failed to create tournament. Please try again.');
     }
   };

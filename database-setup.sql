@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS tournaments (
   current_round INTEGER NOT NULL DEFAULT 1,
   max_participants INTEGER NOT NULL DEFAULT 16,
   round_duration INTEGER NOT NULL DEFAULT 120,
+  timer_active BOOLEAN NOT NULL DEFAULT FALSE,
+  timer_remaining INTEGER NOT NULL DEFAULT 0,
+  timer_started_at TIMESTAMPTZ,
+  timer_duration INTEGER NOT NULL DEFAULT 120,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   host_last_seen TIMESTAMPTZ DEFAULT NOW()

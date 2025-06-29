@@ -168,3 +168,35 @@ export function formatRoundName(round: number, maxRounds: number): string {
   if (round === maxRounds - 2) return 'Quarter-Finals';
   return `Round ${round}`;
 }
+
+// Find the next match that should become active
+export function findNextActiveMatch(matches: Match[]): Match | null {
+  // First, check if there are any pending matches in the current lowest round
+  const pendingMatches = matches.filter(match => match.status === 'pending');
+  
+  if (pendingMatches.length === 0) {
+    return null; // No more matches to play
+  }
+  
+  // Group pending matches by round
+  const matchesByRound = pendingMatches.reduce((acc, match) => {
+    if (!acc[match.round]) {
+      acc[match.round] = [];
+    }
+    acc[match.round].push(match);
+    return acc;
+  }, {} as Record<number, Match[]>);
+  
+  // Find the lowest round with pending matches
+  const lowestRound = Math.min(...Object.keys(matchesByRound).map(Number));
+  const roundMatches = matchesByRound[lowestRound];
+  
+  // Find matches in this round where both participants are available
+  const readyMatches = roundMatches.filter(match => {
+    // A match is ready if it has both participants (no null/undefined)
+    return match.participant1 && match.participant2;
+  });
+  
+  // Return the first ready match, or the first match in the round if none are fully ready
+  return readyMatches.length > 0 ? readyMatches[0] : roundMatches[0];
+}

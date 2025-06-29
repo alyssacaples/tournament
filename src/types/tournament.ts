@@ -24,6 +24,11 @@ export interface Tournament {
   status: 'setup' | 'active' | 'completed';
   roundDuration: number; // in seconds
   seeded: boolean; // Whether tournament uses seeding (participant order = seed rank)
+  // Timer state for synchronized voting
+  timerActive?: boolean;
+  timerRemaining?: number;
+  timerStartedAt?: string;
+  timerDuration?: number;
 }
 
 export interface GameState {
