@@ -52,20 +52,6 @@ const ActiveMatch: React.FC<ActiveMatchProps> = ({
     return () => clearInterval(interval);
   }, [isTimerActive, timeRemaining]);
 
-  if (!tournament || !currentMatch) return null;
-
-  // Check if tournament is already completed
-  if (tournament.status === 'completed' && !showTournamentComplete) {
-    const champion = tournament.matches
-      .filter(m => m.round === getMaxRounds(tournament.participants.length) && m.winner)
-      .map(m => m.winner)[0];
-    
-    if (champion) {
-      setTournamentChampion(champion);
-      setShowTournamentComplete(true);
-    }
-  }
-
   // Auto-advance matches with only one participant or handle matches with no participants
   useEffect(() => {
     if (!currentMatch || !tournament) return;
@@ -77,15 +63,12 @@ const ActiveMatch: React.FC<ActiveMatchProps> = ({
     
     if (participantCount === 0) {
       // No participants - this match should not occur, return to bracket immediately
-      console.log('Match has no participants, returning to bracket immediately');
       onSetCurrentScreen('bracket');
       return;
     } else if (participantCount === 1 && !isChampionshipMatch) {
       // Only one participant - auto-advance them (but NOT for championship matches)
       const winner = currentMatch.participant1 || currentMatch.participant2;
       if (winner) {
-        console.log('Auto-advancing match with single participant:', winner.name);
-        
         // Small delay to show the match briefly before auto-advancing
         const autoAdvanceTimer = setTimeout(() => {
           // Update the current match with winner
@@ -119,6 +102,20 @@ const ActiveMatch: React.FC<ActiveMatchProps> = ({
     }
     // If it's a championship match with only one participant, let the host manually confirm the winner
   }, [currentMatch, tournament, onUpdateGameState, onSetCurrentScreen]);
+
+  if (!tournament || !currentMatch) return null;
+
+  // Check if tournament is already completed
+  if (tournament.status === 'completed' && !showTournamentComplete) {
+    const champion = tournament.matches
+      .filter(m => m.round === getMaxRounds(tournament.participants.length) && m.winner)
+      .map(m => m.winner)[0];
+    
+    if (champion) {
+      setTournamentChampion(champion);
+      setShowTournamentComplete(true);
+    }
+  }
 
   // If match has no participants, show error
   if (!currentMatch.participant1 && !currentMatch.participant2) {
