@@ -53,7 +53,7 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
       }
       loadVoteTallies();
     }
-  }, [tournament, currentMatch]);
+  }, [tournament, currentMatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -131,7 +131,7 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
       clearInterval(refreshInterval);
       cleanupSubscription(channel, `match-votes-${currentMatch.id}`);
     };
-  }, [currentMatch?.id, tournament?.id]); // More specific dependencies
+  }, [currentMatch?.id, tournament?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadVoteTallies = async () => {
     if (!currentMatch || !tournament?.id) return;

@@ -30,23 +30,11 @@ const AnonymousTournamentBracket: React.FC<AnonymousTournamentBracketProps> = ({
   const [roundDuration, setRoundDuration] = useState(gameState.tournament?.roundDuration || 120);
   const [isUpdatingDatabase, setIsUpdatingDatabase] = useState(false);
 
-  if (!gameState.tournament) return null;
-
-  const { tournament } = gameState;
-  const maxRounds = getMaxRounds(tournament.participants.length);
-  
-  // Group matches by round
-  const matchesByRound = tournament.matches.reduce((acc, match) => {
-    if (!acc[match.round]) acc[match.round] = [];
-    acc[match.round].push(match);
-    return acc;
-  }, {} as Record<number, Match[]>);
-
-  const nextMatch = getNextMatch(tournament.matches, tournament.currentRound);
-  const currentRoundComplete = isRoundComplete(tournament.matches, tournament.currentRound);
-
   // Update Supabase when tournament state changes
   useEffect(() => {
+    const tournament = gameState.tournament;
+    if (!tournament) return;
+    
     const updateDatabase = async () => {
       if (!tournament.id || isUpdatingDatabase) return;
       
@@ -77,7 +65,22 @@ const AnonymousTournamentBracket: React.FC<AnonymousTournamentBracketProps> = ({
     };
 
     updateDatabase();
-  }, [tournament, isUpdatingDatabase]);
+  }, [gameState.tournament, isUpdatingDatabase]);
+
+  if (!gameState.tournament) return null;
+
+  const { tournament } = gameState;
+  const maxRounds = getMaxRounds(tournament.participants.length);
+  
+  // Group matches by round
+  const matchesByRound = tournament.matches.reduce((acc, match) => {
+    if (!acc[match.round]) acc[match.round] = [];
+    acc[match.round].push(match);
+    return acc;
+  }, {} as Record<number, Match[]>);
+
+  const nextMatch = getNextMatch(tournament.matches, tournament.currentRound);
+  const currentRoundComplete = isRoundComplete(tournament.matches, tournament.currentRound);
 
   const handleStartNextMatch = async () => {
     if (!nextMatch || !tournament?.id) return;
