@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import AnonymousSetup from '../../../components/anonymous/AnonymousSetup';
-import AnonymousWaitingRoom from '../../../components/anonymous/AnonymousWaitingRoom';
-import AnonymousTournamentBracket from '../../../components/anonymous/AnonymousTournamentBracket';
-import AnonymousActiveMatch from '../../../components/anonymous/AnonymousActiveMatch';
+import AnonymousSetup from '../../../components/modes/anonymous/AnonymousSetup';
+import AnonymousWaitingRoom from '../../../components/modes/anonymous/AnonymousWaitingRoom';
+import AnonymousTournamentBracket from '../../../components/modes/anonymous/AnonymousTournamentBracket';
+import AnonymousActiveMatch from '../../../components/modes/anonymous/AnonymousActiveMatch';
 import { Tournament, Participant, Match, GameState } from '../../../types/tournament';
 import { createTournamentBracket } from '../../../utils/tournament';
 import { generateTournamentCode, createTournamentInDB, updateTournamentState, getConnectedVotersCount } from '../../../utils/supabase';

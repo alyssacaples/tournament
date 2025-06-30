@@ -23,92 +23,78 @@ export function createParticipants(participantNames: string[]): Participant[] {
   }));
 }
 
-export function createTournamentBracket(participants: Participant[], seeded: boolean = false): Match[] {
-  if (participants.length < 2) {
+
+
+export const createTournamentBracket = (participants: Participant[], seeded: boolean = false): Match[] => {
+  // Sort participants if seeded
+if (participants.length < 2) {
     throw new Error('At least 2 participants required');
   }
 
-  // Sort participants by seed if seeded (participant order = seed rank)
-  const orderedParticipants = seeded 
-    ? [...participants] // Already in seed order
-    : shuffleArray(participants); // Random order
+  if (seeded) {
+    participants.sort((a, b) => (a.seed || Infinity) - (b.seed || Infinity));
+  }
+
+  const numParticipants = participants.length;
+  const rounds = Math.ceil(Math.log2(numParticipants));
+  const totalMatches = Math.pow(2, rounds) - 1;
   
-  const totalParticipants = participants.length;
-  const maxRounds = Math.ceil(Math.log2(totalParticipants));
   const matches: Match[] = [];
   
-  // Calculate how many first round matches we need
-  // If we have 10 participants, we need 6 first round matches (4 real matches + 2 byes)
-  // This will leave us with 8 participants for round 2 (4 winners + 2 bye recipients + 2 who got byes)
-  const nextPowerOf2 = Math.pow(2, maxRounds);
-  const firstRoundByes = nextPowerOf2 - totalParticipants;
-  const firstRoundMatches = (totalParticipants - firstRoundByes) / 2;
-  const totalFirstRoundSlots = firstRoundMatches + firstRoundByes;
-  
-  // Create first round - distribute participants and byes
-  let participantIndex = 0;
-  
-  // Create actual matches first
-  for (let i = 0; i < firstRoundMatches; i++) {
-    const participant1 = orderedParticipants[participantIndex++];
-    const participant2 = orderedParticipants[participantIndex++];
-    
-    matches.push({
-      id: `round-1-match-${i}`,
-      participant1,
-      participant2,
-      winner: null,
-      round: 1,
-      position: i,
-      status: 'pending'
-    });
-  }
-  
-  // Create bye matches (single participants who advance automatically)
-  for (let i = 0; i < firstRoundByes; i++) {
-    const participant = orderedParticipants[participantIndex++];
-    
-    matches.push({
-      id: `round-1-match-${firstRoundMatches + i}`,
-      participant1: participant,
-      participant2: null,
-      winner: participant,
-      round: 1,
-      position: firstRoundMatches + i,
-      status: 'completed'
-    });
-  }
-  
-  // Create subsequent rounds (all will have exactly the right number of matches)
-  let currentRoundSize = totalFirstRoundSlots;
-  let roundNumber = 2;
-  
-  while (currentRoundSize > 1) {
-    const nextRoundSize = currentRoundSize / 2;
-    for (let i = 0; i < nextRoundSize; i++) {
+  // Create all matches structure first
+  for (let round = 0; round < rounds; round++) {
+    const matchesInRound = Math.pow(2, rounds - round - 1);
+    for (let position = 0; position < matchesInRound; position++) {
       matches.push({
-        id: `round-${roundNumber}-match-${i}`,
-        participant1: null,
+        id: `${round}-${position}`,
+        round,
+        position,
+        participant1: null, // Start with null participants for all matches
         participant2: null,
         winner: null,
-        round: roundNumber,
-        position: i,
         status: 'pending'
       });
     }
-    currentRoundSize = nextRoundSize;
-    roundNumber++;
   }
   
-  // Auto-advance winners from completed first round matches (bye recipients)
-  const completedMatches = matches.filter(m => m.status === 'completed' && m.winner);
-  
-  for (const match of completedMatches) {
-    advanceWinner(matches, match);
+  // Only populate first round with actual participants
+  const firstRoundMatches = matches.filter(match => match.round === 0);
+  for (let i = 0; i < firstRoundMatches.length; i++) {
+    // Add first participant
+    if (i * 2 < numParticipants) {
+      firstRoundMatches[i].participant1 = participants[i * 2];
+    }
+    
+    // Add second participant
+    if (i * 2 + 1 < numParticipants) {
+      firstRoundMatches[i].participant2 = participants[i * 2 + 1];
+    }
+    
+    // Auto-advance single participant (bye match)
+    if (firstRoundMatches[i].participant1 && !firstRoundMatches[i].participant2) {
+      firstRoundMatches[i].winner = firstRoundMatches[i].participant1;
+      firstRoundMatches[i].status = 'completed';
+      
+      // Find the next match this participant should advance to
+      const nextRound = 1;
+      const nextPosition = Math.floor(i / 2);
+      const nextMatchIndex = matches.findIndex(m => 
+        m.round === nextRound && m.position === nextPosition
+      );
+      
+      if (nextMatchIndex !== -1) {
+        // Place in correct slot based on position
+        if (i % 2 === 0) {
+          matches[nextMatchIndex].participant1 = firstRoundMatches[i].winner;
+        } else {
+          matches[nextMatchIndex].participant2 = firstRoundMatches[i].winner;
+        }
+      }
+    }
   }
   
   return matches;
-}
+};
 
 export function generateTestParticipants(count: number): Participant[] {
   const shuffledBreakfast = shuffleArray(BREAKFAST_ITEMS);

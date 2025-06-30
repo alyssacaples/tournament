@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { GameState, Tournament } from '@/types/tournament';
-import TournamentBracket from '@/components/TournamentBracket';
-import ActiveMatch from '@/components/ActiveMatch';
+import TournamentBracket from '@/components/modes/local/TournamentBracket';
+import ActiveMatch from '@/components/modes/local/ActiveMatch';
 import { generateTestParticipants, createTournamentBracket } from '@/utils/tournament';
 
 export default function TestModePage() {
