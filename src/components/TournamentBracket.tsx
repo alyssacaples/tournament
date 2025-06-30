@@ -60,14 +60,11 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
     if (!winner) return;
 
     // Mark match as completed with winner
-    let updatedMatches = tournament.matches.map(m => 
+    const updatedMatches = tournament.matches.map(m => 
       m.id === nextMatch.id 
         ? { ...m, winner, status: 'completed' as const }
         : m
     );
-
-    // Advance winner to next round
-    updatedMatches = advanceWinner(updatedMatches, { ...nextMatch, winner });
 
     onUpdateGameState(prev => ({
       ...prev,
@@ -94,22 +91,11 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
       return;
     }
 
-    // Advance all winners from current round to next round
-    let updatedMatches = [...tournament.matches];
-    const currentRoundMatches = updatedMatches.filter(m => 
-      m.round === tournament.currentRound && m.status === 'completed' && m.winner
-    );
-    
-    for (const match of currentRoundMatches) {
-      updatedMatches = advanceWinner(updatedMatches, match);
-    }
-
     onUpdateGameState(prev => ({
       ...prev,
       tournament: prev.tournament ? {
         ...prev.tournament,
-        currentRound: nextRound,
-        matches: updatedMatches
+        currentRound: nextRound
       } : null
     }));
   };
@@ -170,7 +156,7 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
               match.winner?.id === match.participant1.id ? 'bg-blue-200 border border-blue-400' : ''
             }`}>
               <ParticipantShape visualId={match.participant1.visualId} size="sm" />
-              <span className="text-sm font-medium text-black">{match.participant1.name}</span>
+              <span className="text-sm font-medium">{match.participant1.name}</span>
             </div>
           )}
           {match.participant2 && (
@@ -178,11 +164,11 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
               match.winner?.id === match.participant2.id ? 'bg-blue-200 border border-blue-400' : ''
             }`}>
               <ParticipantShape visualId={match.participant2.visualId} size="sm" />
-              <span className="text-sm font-medium text-black">{match.participant2.name}</span>
+              <span className="text-sm font-medium">{match.participant2.name}</span>
             </div>
           )}
           {match.status === 'bye' && (
-            <div className="text-center text-black text-sm font-medium">BYE</div>
+            <div className="text-center text-gray-500 text-sm">BYE</div>
           )}
         </div>
       </div>
@@ -194,8 +180,8 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-black">{tournament.name}</h1>
-          <p className="text-black">
+          <h1 className="text-3xl font-bold text-gray-800">{tournament.name}</h1>
+          <p className="text-gray-600">
             {formatRoundName(tournament.currentRound, maxRounds)} - Round {tournament.currentRound} of {maxRounds}
           </p>
         </div>
@@ -203,13 +189,13 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
         <div className="flex gap-2">
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 text-black hover:text-gray-800"
+            className="p-2 text-gray-600 hover:text-gray-800"
           >
             <Settings size={24} />
           </button>
           <button
             onClick={onGoHome}
-            className="p-2 text-black hover:text-gray-800"
+            className="p-2 text-gray-600 hover:text-gray-800"
           >
             <Home size={24} />
           </button>
@@ -219,10 +205,10 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
       {/* Settings Panel */}
       {showSettings && (
         <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
-          <h3 className="font-bold mb-3 text-black">Tournament Settings</h3>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <h3 className="font-bold mb-3">Tournament Settings</h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1 text-black">Round Duration (seconds)</label>
+              <label className="block text-sm font-medium mb-1">Round Duration (seconds)</label>
               <input
                 type="number"
                 min="30"
@@ -237,15 +223,6 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
               >
                 Update
               </button>
-            </div>
-            <div className="flex flex-col">
-              <label className="block text-sm font-medium mb-1 text-black">Seeding</label>
-              <div className="text-xs text-black mb-2">
-                Current: {tournament.seeded ? 'Enabled' : 'Disabled'}
-              </div>
-              <div className="text-xs text-orange-600">
-                Changing requires reset
-              </div>
             </div>
             <button
               onClick={resetTournament}
@@ -282,7 +259,7 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
               
               return (
                 <div key={roundNumber} className="flex flex-col gap-4 min-w-48">
-                  <h3 className="text-lg font-bold text-center text-black">
+                  <h3 className="text-lg font-bold text-center">
                     {formatRoundName(roundNumber, maxRounds)}
                   </h3>
                   <div className="flex flex-col gap-4">
@@ -298,28 +275,28 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
       {/* Next Match Info */}
       {nextMatch && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-          <h3 className="font-bold text-black mb-2">Next Match</h3>
+          <h3 className="font-bold text-yellow-800 mb-2">Next Match</h3>
           <div className="flex items-center gap-4">
             {nextMatch.participant1 ? (
               <div className="flex items-center gap-2">
                 <ParticipantShape visualId={nextMatch.participant1.visualId} size="md" />
-                <span className="font-medium text-black">{nextMatch.participant1.name}</span>
+                <span className="font-medium">{nextMatch.participant1.name}</span>
               </div>
             ) : (
-              <div className="text-black italic">No participant</div>
+              <div className="text-gray-400 italic">No participant</div>
             )}
             <span className="text-yellow-600">VS</span>
             {nextMatch.participant2 ? (
               <div className="flex items-center gap-2">
                 <ParticipantShape visualId={nextMatch.participant2.visualId} size="md" />
-                <span className="font-medium text-black">{nextMatch.participant2.name}</span>
+                <span className="font-medium">{nextMatch.participant2.name}</span>
               </div>
             ) : (
-              <div className="text-black italic">No participant</div>
+              <div className="text-gray-400 italic">No participant</div>
             )}
           </div>
           {(!nextMatch.participant1 || !nextMatch.participant2) && (
-            <div className="mt-2 text-sm text-black">
+            <div className="mt-2 text-sm text-yellow-700">
               Host will select the winner to advance
             </div>
           )}
@@ -367,7 +344,7 @@ const TournamentBracket: React.FC<TournamentBracketProps> = ({
               .map(winner => winner && (
                 <div key={winner.id} className="flex items-center gap-3 justify-center">
                   <ParticipantShape visualId={winner.visualId} size="lg" />
-                  <span className="text-xl font-bold text-black">{winner.name} is the Champion!</span>
+                  <span className="text-xl font-bold">{winner.name} is the Champion!</span>
                 </div>
               ))
             }

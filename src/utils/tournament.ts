@@ -14,37 +14,20 @@ export function getNextPowerOfTwo(num: number): number {
   return Math.pow(2, Math.ceil(Math.log2(num)));
 }
 
-export function createTournamentBracket(participants: Participant[], seeded: boolean = false): Match[] {
-  if (participants.length < 2) {
-    throw new Error('At least 2 participants required');
-  }
-
-  // Sort participants by seed if seeded (participant order = seed rank)
-  const orderedParticipants = seeded 
-    ? [...participants] // Already in seed order
-    : shuffleArray(participants); // Random order
-  
-  const totalParticipants = participants.length;
-  const maxRounds = Math.ceil(Math.log2(totalParticipants));
+export function createTournamentBracket(participants: Participant[]): Match[] {
+  const bracketSize = getNextPowerOfTwo(participants.length);
   const matches: Match[] = [];
   
-  // Calculate how many first round matches we need
-  // If we have 10 participants, we need 6 first round matches (4 real matches + 2 byes)
-  // This will leave us with 8 participants for round 2 (4 winners + 2 bye recipients + 2 who got byes)
-  const nextPowerOf2 = Math.pow(2, maxRounds);
-  const firstRoundByes = nextPowerOf2 - totalParticipants;
-  const firstRoundMatches = (totalParticipants - firstRoundByes) / 2;
-  const totalFirstRoundSlots = firstRoundMatches + firstRoundByes;
+  // Shuffle participants
+  const shuffledParticipants = shuffleArray(participants);
   
-  // Create first round - distribute participants and byes
-  let participantIndex = 0;
-  
-  // Create actual matches first
+  // Create first round matches
+  const firstRoundMatches = bracketSize / 2;
   for (let i = 0; i < firstRoundMatches; i++) {
-    const participant1 = orderedParticipants[participantIndex++];
-    const participant2 = orderedParticipants[participantIndex++];
+    const participant1 = shuffledParticipants[i * 2] || null;
+    const participant2 = shuffledParticipants[i * 2 + 1] || null;
     
-    matches.push({
+    const match: Match = {
       id: `round-1-match-${i}`,
       participant1,
       participant2,
@@ -52,26 +35,24 @@ export function createTournamentBracket(participants: Participant[], seeded: boo
       round: 1,
       position: i,
       status: 'pending'
-    });
-  }
-  
-  // Create bye matches (single participants who advance automatically)
-  for (let i = 0; i < firstRoundByes; i++) {
-    const participant = orderedParticipants[participantIndex++];
+    };
     
-    matches.push({
-      id: `round-1-match-${firstRoundMatches + i}`,
-      participant1: participant,
-      participant2: null,
-      winner: participant,
-      round: 1,
-      position: firstRoundMatches + i,
-      status: 'completed'
-    });
+    // Handle byes and single participants
+    if (!participant1 && !participant2) {
+      match.status = 'bye';
+    } else if (!participant2 && participant1) {
+      match.winner = participant1;
+      match.status = 'completed';
+    } else if (!participant1 && participant2) {
+      match.winner = participant2;
+      match.status = 'completed';
+    }
+    
+    matches.push(match);
   }
   
-  // Create subsequent rounds (all will have exactly the right number of matches)
-  let currentRoundSize = totalFirstRoundSlots;
+  // Create subsequent rounds
+  let currentRoundSize = firstRoundMatches;
   let roundNumber = 2;
   
   while (currentRoundSize > 1) {
@@ -91,12 +72,12 @@ export function createTournamentBracket(participants: Participant[], seeded: boo
     roundNumber++;
   }
   
-  // Auto-advance winners from completed first round matches (bye recipients)
-  const completedMatches = matches.filter(m => m.status === 'completed' && m.winner);
-  
-  for (const match of completedMatches) {
-    advanceWinner(matches, match);
-  }
+  // Auto-advance winners from completed first round matches
+  matches.forEach(match => {
+    if (match.round === 1 && match.status === 'completed' && match.winner) {
+      advanceWinner(matches, match);
+    }
+  });
   
   return matches;
 }
@@ -124,12 +105,8 @@ export function parseParticipantInput(input: string): string[] {
 }
 
 export function getNextMatch(matches: Match[], currentRound: number): Match | null {
-  // Find next pending match in current round that has at least one participant
-  const currentRoundMatches = matches.filter(m => 
-    m.round === currentRound && 
-    m.status === 'pending' && 
-    (m.participant1 || m.participant2) // Must have at least one participant
-  );
+  // Find next pending match in current round
+  const currentRoundMatches = matches.filter(m => m.round === currentRound && m.status === 'pending');
   return currentRoundMatches[0] || null;
 }
 
@@ -154,12 +131,11 @@ export function advanceWinner(matches: Match[], completedMatch: Match): Match[] 
 
 export function isRoundComplete(matches: Match[], round: number): boolean {
   const roundMatches = matches.filter(m => m.round === round);
-  // A round is complete when all matches are either completed or are byes (no participants)
   return roundMatches.every(m => m.status === 'completed' || m.status === 'bye');
 }
 
 export function getMaxRounds(participantCount: number): number {
-  return Math.ceil(Math.log2(participantCount));
+  return Math.log2(getNextPowerOfTwo(participantCount));
 }
 
 export function formatRoundName(round: number, maxRounds: number): string {
@@ -169,34 +145,56 @@ export function formatRoundName(round: number, maxRounds: number): string {
   return `Round ${round}`;
 }
 
-// Find the next match that should become active
-export function findNextActiveMatch(matches: Match[]): Match | null {
-  // First, check if there are any pending matches in the current lowest round
-  const pendingMatches = matches.filter(match => match.status === 'pending');
+export function generateRandomCode(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 4; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+export function createTournament(participants: Participant[]): Tournament {
+  return {
+    id: `tournament-${Date.now()}`,
+    name: 'Anonymous Tournament',
+    participants,
+    matches: [],
+    currentRound: 1,
+    currentMatch: null,
+    status: 'setup',
+    roundDuration: 30
+  };
+}
+
+export function setupTournament(tournament: Tournament): Tournament {
+  const matches = createTournamentBracket(tournament.participants);
+  return {
+    ...tournament,
+    matches,
+    status: 'active'
+  };
+}
+
+export function findNextActiveMatch(tournament: Tournament): Match | null {
+  // Find first pending match that has both participants
+  const pendingMatches = tournament.matches.filter(m => 
+    m.status === 'pending' && 
+    m.participant1 && 
+    m.participant2
+  );
   
   if (pendingMatches.length === 0) {
-    return null; // No more matches to play
+    // Check if there are any pending matches at all (for byes)
+    const anyPending = tournament.matches.filter(m => m.status === 'pending');
+    return anyPending.length > 0 ? anyPending[0] : null;
   }
   
-  // Group pending matches by round
-  const matchesByRound = pendingMatches.reduce((acc, match) => {
-    if (!acc[match.round]) {
-      acc[match.round] = [];
-    }
-    acc[match.round].push(match);
-    return acc;
-  }, {} as Record<number, Match[]>);
-  
-  // Find the lowest round with pending matches
-  const lowestRound = Math.min(...Object.keys(matchesByRound).map(Number));
-  const roundMatches = matchesByRound[lowestRound];
-  
-  // Find matches in this round where both participants are available
-  const readyMatches = roundMatches.filter(match => {
-    // A match is ready if it has both participants (no null/undefined)
-    return match.participant1 && match.participant2;
+  // Sort by round, then by position
+  pendingMatches.sort((a, b) => {
+    if (a.round !== b.round) return a.round - b.round;
+    return a.position - b.position;
   });
   
-  // Return the first ready match, or the first match in the round if none are fully ready
-  return readyMatches.length > 0 ? readyMatches[0] : roundMatches[0];
+  return pendingMatches[0];
 }

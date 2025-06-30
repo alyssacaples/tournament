@@ -5,7 +5,7 @@ import { ArrowLeft, Users, Plus } from 'lucide-react';
 import { parseParticipantInput } from '@/utils/tournament';
 
 interface ParticipantSetupProps {
-  onCreateTournament: (name: string, participants: string[], seeded: boolean) => void;
+  onCreateTournament: (name: string, participants: string[]) => void;
   onBack: () => void;
 }
 
@@ -14,7 +14,6 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
   const [participantInput, setParticipantInput] = useState('');
   const [participantCount, setParticipantCount] = useState(8);
   const [inputMode, setInputMode] = useState<'paste' | 'count'>('paste');
-  const [seeded, setSeeded] = useState(false);
 
   const handleSubmit = () => {
     if (!tournamentName.trim()) {
@@ -42,7 +41,7 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
       participants = Array.from({ length: participantCount }, (_, i) => `Player ${i + 1}`);
     }
 
-    onCreateTournament(tournamentName, participants, seeded);
+    onCreateTournament(tournamentName, participants);
   };
 
   const parsedParticipants = inputMode === 'paste' ? parseParticipantInput(participantInput) : [];
@@ -143,27 +142,6 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
               </div>
             </div>
           )}
-
-          {/* Seeding Option */}
-          <div className="mb-6">
-            <label className="flex items-center space-x-3">
-              <input
-                type="checkbox"
-                checked={seeded}
-                onChange={(e) => setSeeded(e.target.checked)}
-                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-              />
-              <div>
-                <span className="text-sm font-medium text-gray-700">Enable Seeding</span>
-                <p className="text-xs text-gray-500">
-                  {seeded 
-                    ? "Participants will be arranged by rank order (first = highest seed). Best players get byes."
-                    : "Participants will be randomly shuffled. Byes are assigned randomly."
-                  }
-                </p>
-              </div>
-            </label>
-          </div>
 
           {/* Create Tournament Button */}
           <button

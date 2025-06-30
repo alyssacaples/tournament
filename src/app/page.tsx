@@ -24,22 +24,16 @@ export default function Home() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Validate the parsed data structure
-        if (parsed && parsed.tournament && typeof parsed.tournament === 'object') {
-          setGameState(parsed);
+        setGameState(parsed);
+        if (parsed.tournament) {
           if (parsed.tournament.currentMatch) {
             setCurrentScreen('match');
           } else {
             setCurrentScreen('bracket');
           }
-        } else {
-          // Clear invalid data
-          localStorage.removeItem('tournament-state');
         }
       } catch (error) {
         console.error('Failed to load saved state:', error);
-        // Clear corrupted data
-        localStorage.removeItem('tournament-state');
       }
     }
   }, []);
@@ -54,7 +48,7 @@ export default function Home() {
   const startTestMode = () => {
     const participantCount = Math.floor(Math.random() * 15) + 2; // 2-16 participants
     const participants = generateTestParticipants(participantCount);
-    const matches = createTournamentBracket(participants, false); // Test mode is not seeded
+    const matches = createTournamentBracket(participants);
     
     const tournament: Tournament = {
       id: `test-${Date.now()}`,
@@ -64,8 +58,7 @@ export default function Home() {
       currentRound: 1,
       currentMatch: null,
       status: 'active',
-      roundDuration: 120, // 2 minutes
-      seeded: false
+      roundDuration: 120 // 2 minutes
     };
 
     setGameState(prev => ({
@@ -81,14 +74,14 @@ export default function Home() {
     setCurrentScreen('setup');
   };
 
-  const createTournament = (name: string, participantNames: string[], seeded: boolean = false) => {
+  const createTournament = (name: string, participantNames: string[]) => {
     const participants = participantNames.map((name, index) => ({
       id: `participant-${index}`,
       name,
       visualId: index
     }));
     
-    const matches = createTournamentBracket(participants, seeded);
+    const matches = createTournamentBracket(participants);
     
     const tournament: Tournament = {
       id: `tournament-${Date.now()}`,
@@ -98,8 +91,7 @@ export default function Home() {
       currentRound: 1,
       currentMatch: null,
       status: 'active',
-      roundDuration: 120, // 2 minutes
-      seeded
+      roundDuration: 120 // 2 minutes
     };
 
     setGameState(prev => ({
@@ -113,18 +105,6 @@ export default function Home() {
     setCurrentScreen('home');
     setGameState(prev => ({ ...prev, tournament: null }));
     localStorage.removeItem('tournament-state');
-  };
-
-  const clearStorageAndRestart = () => {
-    localStorage.clear();
-    setGameState({
-      tournament: null,
-      mode: 'local',
-      timerRemaining: 0,
-      isTimerActive: false
-    });
-    setCurrentScreen('home');
-    window.location.reload();
   };
 
   const goToSetup = () => {
@@ -180,25 +160,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-orange-100 via-yellow-50 to-red-100">
-      {/* Debug Panel - shown when there might be issues */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="fixed bottom-4 left-4 z-50">
-          <div className="bg-white border-2 border-red-300 rounded-lg p-3 shadow-lg">
-            <h4 className="text-sm font-bold text-red-700 mb-2">Debug Panel</h4>
-            <div className="text-xs text-gray-600 mb-2">
-              Current Screen: {currentScreen}<br/>
-              Tournament: {gameState.tournament ? 'Loaded' : 'None'}<br/>
-              Current Match: {gameState.tournament?.currentMatch ? 'Active' : 'None'}
-            </div>
-            <button
-              onClick={clearStorageAndRestart}
-              className="bg-red-500 hover:bg-red-600 text-white text-xs px-2 py-1 rounded"
-            >
-              Clear & Restart
-            </button>
-          </div>
-        </div>
-      )}
       {renderScreen()}
     </main>
   );

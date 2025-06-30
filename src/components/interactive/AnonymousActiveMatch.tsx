@@ -214,6 +214,270 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
     }
   };
 
+  const handleAddTime = async (seconds: number) => {
+    if (!tournament?.id) return;
+    
+    const newTime = timeRemaining + seconds;
+    setTimeRemaining(newTime);
+    
+    // Update database
+    await updateTimerRemaining(tournament.id, newTime);
+  };
+
+  const handleEndMatch = async () => {
+    if (!tournament?.id || !currentMatch || isAdvancing) return;
+    
+    setIsAdvancing(true);
+    
+    try {
+      // Stop the timer
+      const success = await pauseTimer(tournament.id);
+      if (success) {
+        setIsTimerActive(false);
+      }
+      
+      // Determine winner based on current vote tallies
+      let winner = null;
+      
+      if (currentMatch.participant1 && currentMatch.participant2) {
+        const votes1 = voteTallies.find(t => t.participantId === currentMatch.participant1!.id)?.count || 0;
+        const votes2 = voteTallies.find(t => t.participantId === currentMatch.participant2!.id)?.count || 0;
+        
+        if (votes1 > votes2) {
+          winner = currentMatch.participant1;
+        } else if (votes2 > votes1) {
+          winner = currentMatch.participant2;
+        } else {
+          // Tie - pick randomly
+          winner = Math.random() < 0.5 ? currentMatch.participant1 : currentMatch.participant2;
+        }
+      } else if (currentMatch.participant1) {
+        // Bye match
+        winner = currentMatch.participant1;
+      }
+
+      if (!winner) {
+        logSupabaseOperation('End Match - No Winner', { currentMatch });
+        setIsAdvancing(false);
+        return;
+      }
+
+      logSupabaseOperation('End Match - Winner Determined', {
+        winner: winner.name,
+        winnerId: winner.id,
+        votes1: currentMatch.participant1 ? voteTallies.find(t => t.participantId === currentMatch.participant1!.id)?.count || 0 : 0,
+        votes2: currentMatch.participant2 ? voteTallies.find(t => t.participantId === currentMatch.participant2!.id)?.count || 0 : 0
+      });
+
+      // Update match with winner
+      const updatedMatches = tournament.matches.map(match => 
+        match.id === currentMatch.id 
+          ? { ...match, winner, status: 'completed' as const }
+          : match
+      );
+
+      // Advance winner to next round
+      const finalMatches = advanceWinner(updatedMatches, { ...currentMatch, winner });
+      
+      // Check if tournament is complete
+      const maxRounds = getMaxRounds(tournament.participants.length);
+      const isLastMatch = currentMatch.round === maxRounds;
+      
+      let newStatus: 'active' | 'completed' = 'active';
+      
+      if (isLastMatch) {
+        // Tournament is complete
+        setTournamentChampion(winner);
+        setShowTournamentComplete(true);
+        newStatus = 'completed';
+      }
+
+      // Update local state - keep current match for celebration, but mark as completed
+      onUpdateGameState(prev => ({
+        ...prev,
+        tournament: prev.tournament ? {
+          ...prev.tournament,
+          matches: finalMatches,
+          currentMatch: { ...currentMatch, winner, status: 'completed' as const }, // Keep match for celebration
+          status: newStatus
+        } : null
+      }));
+
+      // Update database
+      await supabase
+        .from('tournaments')
+        .update({
+          matches: finalMatches,
+          current_match_id: null, // Clear active match in database
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+          host_last_seen: new Date().toISOString(),
+          timer_active: false,
+          timer_remaining: 0,
+          timer_started_at: null
+        })
+        .eq('id', tournament.id);
+
+      if (isLastMatch) {
+        // Show tournament completion celebration
+        // Component will show the celebration screen
+      } else {
+        // Show winner celebration, then return to bracket
+        setSelectedWinner(winner.id);
+        setShowCelebration(true);
+        setTimeout(() => {
+          setShowCelebration(false);
+          setSelectedWinner(null);
+          // Now clear the current match and go to bracket
+          onUpdateGameState(prev => ({
+            ...prev,
+            tournament: prev.tournament ? {
+              ...prev.tournament,
+              currentMatch: null
+            } : null
+          }));
+          onSetCurrentScreen('bracket');
+        }, 3000);
+      }
+
+    } catch (err) {
+      console.error('Error ending match:', err);
+    } finally {
+      setIsAdvancing(false);
+    }
+  };
+
+  const handleSelectWinner = (participantId: string) => {
+    setSelectedWinner(participantId);
+    setShowWinnerConfirm(true);
+  };
+
+  const handleRandomWinner = () => {
+    const participants = [currentMatch?.participant1, currentMatch?.participant2].filter(Boolean);
+    if (participants.length === 0) return;
+    
+    const randomWinner = participants[Math.floor(Math.random() * participants.length)];
+    if (randomWinner) {
+      setSelectedWinner(randomWinner.id);
+      setShowWinnerConfirm(true);
+    }
+  };
+
+  const handleConfirmWinner = async () => {
+    if (!selectedWinner || !currentMatch || !tournament || isAdvancing) return;
+
+    setIsAdvancing(true);
+    
+    try {
+      const winner = currentMatch.participant1?.id === selectedWinner 
+        ? currentMatch.participant1 
+        : currentMatch.participant2;
+
+      if (!winner) {
+        setIsAdvancing(false);
+        return;
+      }
+
+      logSupabaseOperation('Manual Winner Selection', {
+        currentMatchId: currentMatch.id,
+        winner: winner.name,
+        winnerId: winner.id
+      });
+
+      // Update match with winner
+      const updatedMatches = tournament.matches.map(match => 
+        match.id === currentMatch.id 
+          ? { ...match, winner, status: 'completed' as const }
+          : match
+      );
+
+      // Advance winner to next round
+      const finalMatches = advanceWinner(updatedMatches, { ...currentMatch, winner });
+      
+      // Check if tournament is complete
+      const maxRounds = getMaxRounds(tournament.participants.length);
+      const isLastMatch = currentMatch.round === maxRounds;
+      
+      let nextActiveMatch = null;
+      let newStatus: 'active' | 'completed' = 'active';
+      
+      if (isLastMatch) {
+        // Tournament is complete
+        setTournamentChampion(winner);
+        setShowTournamentComplete(true);
+        newStatus = 'completed';
+      } else {
+        // Find the next match that should become active
+        nextActiveMatch = findNextActiveMatch(finalMatches);
+        
+        if (nextActiveMatch) {
+          // Mark the next match as active
+          const matchesWithNextActive = finalMatches.map(match => 
+            match.id === nextActiveMatch!.id 
+              ? { ...match, status: 'active' as const }
+              : match
+          );
+          
+          finalMatches.splice(0, finalMatches.length, ...matchesWithNextActive);
+        } else {
+          newStatus = 'completed';
+        }
+      }
+
+      // Update local state
+      onUpdateGameState(prev => ({
+        ...prev,
+        tournament: prev.tournament ? {
+          ...prev.tournament,
+          matches: finalMatches,
+          currentMatch: isLastMatch ? currentMatch : null, // Keep current match for championship celebration
+          status: newStatus
+        } : null
+      }));
+
+      // Update database
+      await supabase
+        .from('tournaments')
+        .update({
+          matches: finalMatches,
+          current_match_id: nextActiveMatch?.id || null,
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+          host_last_seen: new Date().toISOString(),
+          ...(nextActiveMatch ? {
+            timer_active: false, // Don't auto-start next match timer
+            timer_remaining: tournament.roundDuration || 120,
+            timer_started_at: null
+          } : {
+            timer_active: false,
+            timer_remaining: 0,
+            timer_started_at: null
+          })
+        })
+        .eq('id', tournament.id);
+
+      setShowWinnerConfirm(false);
+      setSelectedWinner(null);
+
+      if (isLastMatch) {
+        // Show tournament completion celebration
+        // Component will show the celebration screen
+      } else {
+        // Show winner celebration, then return to bracket
+        setShowCelebration(true);
+        setTimeout(() => {
+          setShowCelebration(false);
+          onSetCurrentScreen('bracket');
+        }, 3000);
+      }
+
+    } catch (err) {
+      console.error('Error confirming winner:', err);
+    } finally {
+      setIsAdvancing(false);
+    }
+  };
+
   const handleAdvanceMatch = async () => {
     if (!currentMatch || !tournament || isAdvancing) return;
 
@@ -400,57 +664,153 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
     );
   }
 
-  // Tournament Complete Screen
+  // Tournament Complete Screen - Match Local Mode Celebration
   if (showTournamentComplete && tournamentChampion) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-yellow-100 to-orange-200">
-        <div className="text-center max-w-2xl mx-auto p-8">
-          <Trophy className="mx-auto h-32 w-32 text-yellow-500 mb-8" />
-          <h1 className="text-6xl font-black text-gray-800 mb-4">CHAMPION!</h1>
-          <div className="flex items-center justify-center gap-4 mb-8">
-            <ParticipantShape visualId={tournamentChampion.visualId} size="xl" />
-            <h2 className="text-4xl font-bold text-gray-700">{tournamentChampion.name}</h2>
+      <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div className="relative overflow-hidden bg-gradient-to-br from-yellow-400 via-orange-500 to-red-500 rounded-3xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+          {/* Falling animations */}
+          <div className="absolute inset-0 pointer-events-none">
+            {Array.from({ length: 50 }, (_, i) => (
+              <div
+                key={i}
+                className="absolute text-4xl animate-bounce opacity-80"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: `${-10 + Math.random() * 120}%`,
+                  animationDelay: `${Math.random() * 3}s`,
+                  animationDuration: `${2 + Math.random() * 2}s`,
+                  transform: `rotate(${Math.random() * 360}deg)`,
+                }}
+              >
+                {['🎉', '🎊', '🏆', '👑', '⭐', '💫', '🎈', '🎁', '🌟', '✨'][Math.floor(Math.random() * 10)]}
+              </div>
+            ))}
+            
+            {/* Floating balloons */}
+            {Array.from({ length: 20 }, (_, i) => (
+              <div
+                key={`balloon-${i}`}
+                className="absolute text-6xl animate-pulse"
+                style={{
+                  left: `${Math.random() * 100}%`,
+                  top: `${Math.random() * 100}%`,
+                  animationDelay: `${Math.random() * 4}s`,
+                  animationDuration: `${3 + Math.random() * 2}s`,
+                }}
+              >
+                🎈
+              </div>
+            ))}
           </div>
-          <p className="text-xl text-gray-600 mb-8">
-            Congratulations on winning {tournament.name}!
-          </p>
-          <div className="flex gap-4 justify-center">
-            <button
-              onClick={() => onSetCurrentScreen('bracket')}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium"
-            >
-              View Final Bracket
-            </button>
-            <button
-              onClick={() => onSetCurrentScreen('home')}
-              className="bg-gray-500 hover:bg-gray-600 text-white px-8 py-3 rounded-lg text-lg font-medium"
-            >
-              New Tournament
-            </button>
+
+          {/* Main content */}
+          <div className="relative z-10 p-8 text-center text-white">
+            <div className="text-8xl mb-8 animate-pulse">🏆</div>
+            <h1 className="text-7xl font-black mb-6 text-yellow-100 drop-shadow-2xl animate-bounce">
+              CHAMPION!
+            </h1>
+            <div className="bg-white/20 backdrop-blur-sm rounded-3xl p-8 mb-8 border-4 border-yellow-300">
+              <div className="flex items-center justify-center gap-6 mb-4">
+                <ParticipantShape visualId={tournamentChampion.visualId} size="xl" className="transform scale-150" />
+                <div>
+                  <h2 className="text-5xl font-bold text-yellow-100 mb-2">{tournamentChampion.name}</h2>
+                  <p className="text-2xl text-yellow-200">Tournament Winner!</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="text-3xl font-bold mb-8 text-yellow-100 animate-pulse">
+              🎊 TOURNAMENT COMPLETE! 🎊
+            </div>
+            
+            <div className="flex justify-center gap-8 mb-8">
+              {['🎉', '🏆', '👑', '⭐', '💫'].map((emoji, i) => (
+                <div
+                  key={i}
+                  className="text-6xl animate-bounce"
+                  style={{ animationDelay: `${i * 0.2}s` }}
+                >
+                  {emoji}
+                </div>
+              ))}
+            </div>
+            
+            <p className="text-xl text-yellow-100 mb-8">
+              Congratulations to {tournamentChampion.name} for winning {tournament.name}!
+            </p>
+            
+            <div className="flex gap-4 justify-center">
+              <button
+                onClick={() => {
+                  setShowTournamentComplete(false);
+                  setTournamentChampion(null);
+                  onSetCurrentScreen('bracket');
+                }}
+                className="bg-white/20 hover:bg-white/30 text-white font-bold py-4 px-8 rounded-2xl text-xl transition-all duration-300 transform hover:scale-105 backdrop-blur-sm border-2 border-white/40"
+              >
+                Close Celebration
+              </button>
+              <button
+                onClick={() => {
+                  setShowTournamentComplete(false);
+                  setTournamentChampion(null);
+                  onSetCurrentScreen('bracket');
+                }}
+                className="bg-blue-500 hover:bg-blue-400 text-white font-bold py-4 px-8 rounded-2xl text-xl transition-all duration-300 transform hover:scale-105"
+              >
+                View Final Bracket
+              </button>
+              <button
+                onClick={() => {
+                  setShowTournamentComplete(false);
+                  setTournamentChampion(null);
+                  onSetCurrentScreen('home');
+                }}
+                className="bg-yellow-400 hover:bg-yellow-300 text-yellow-900 font-bold py-4 px-8 rounded-2xl text-xl transition-all duration-300 transform hover:scale-105"
+              >
+                New Tournament
+              </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  // Winner Celebration Screen
+  // Winner Celebration Screen - Match Local Mode
   if (showCelebration && selectedWinner) {
     const winner = [currentMatch.participant1, currentMatch.participant2].find(p => p?.id === selectedWinner);
+    const maxRounds = getMaxRounds(tournament.participants.length);
     
     return (
-      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-green-100 to-blue-200">
-        <div className="text-center max-w-2xl mx-auto p-8">
-          <Trophy className="mx-auto h-24 w-24 text-yellow-500 mb-6 animate-pulse" />
-          <h1 className="text-5xl font-black text-gray-800 mb-6">WINNER!</h1>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-400 to-blue-500">
+        <div className="text-center text-white max-w-2xl">
+          <div className="text-6xl mb-4 animate-bounce">🎉</div>
+          <h1 className="text-4xl font-bold mb-4">Congratulations!</h1>
           {winner && (
-            <div className="flex items-center justify-center gap-4 mb-6">
+            <div className="flex items-center justify-center gap-4 mb-4">
               <ParticipantShape visualId={winner.visualId} size="xl" />
-              <h2 className="text-3xl font-bold text-gray-700">{winner.name}</h2>
+              <span className="text-3xl font-bold">{winner.name}</span>
             </div>
           )}
-          <p className="text-lg text-gray-600">
-            Advancing to the next round...
+          <p className="text-xl mb-8">
+            {winner?.name} has advanced to {formatRoundName(currentMatch.round + 1, maxRounds)}!
           </p>
+          <div className="flex gap-4 justify-center mb-8">
+            <div className="text-4xl animate-bounce">🎊</div>
+            <div className="text-4xl animate-bounce" style={{ animationDelay: '0.2s' }}>🎈</div>
+            <div className="text-4xl animate-bounce" style={{ animationDelay: '0.4s' }}>🎉</div>
+          </div>
+          <button
+            onClick={() => {
+              setShowCelebration(false);
+              onSetCurrentScreen('bracket');
+            }}
+            className="bg-white/20 hover:bg-white/30 text-white font-bold py-4 px-8 rounded-2xl text-xl transition-all duration-300 transform hover:scale-105 backdrop-blur-sm border-2 border-white/40"
+          >
+            Continue to Bracket
+          </button>
         </div>
       </div>
     );
@@ -481,13 +841,6 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
               {totalVotes} votes cast
             </div>
           </div>
-          
-          <button
-            onClick={() => onSetCurrentScreen('bracket')}
-            className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >
-            Back to Bracket
-          </button>
         </div>
       </div>
 
@@ -506,31 +859,71 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
               {minutes.toString().padStart(2, '0')}:{seconds.toString().padStart(2, '0')}
             </div>
             
+            {/* Host Controls - Match Local Mode */}
             <div className="flex gap-2">
               {!isTimerActive ? (
                 <button
                   onClick={handleStartTimer}
-                  className="bg-green-500 hover:bg-green-600 text-white p-2 rounded-lg"
+                  className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg"
                   title="Start Timer"
                 >
-                  <Play size={20} />
+                  <Play size={18} />
+                  Start
                 </button>
               ) : (
                 <button
                   onClick={handlePauseTimer}
-                  className="bg-yellow-500 hover:bg-yellow-600 text-white p-2 rounded-lg"
+                  className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-3 py-2 rounded-lg"
                   title="Pause Timer"
                 >
-                  <Pause size={20} />
+                  <Pause size={18} />
+                  Pause
                 </button>
               )}
               
               <button
+                onClick={() => handleAddTime(30)}
+                className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg"
+                title="Add 30 seconds"
+              >
+                <Plus size={18} />
+                +30s
+              </button>
+
+              <button
+                onClick={() => handleAddTime(60)}
+                className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-lg"
+                title="Add 1 minute"
+              >
+                <Plus size={18} />
+                +1min
+              </button>
+              
+              <button
                 onClick={handleResetTimer}
-                className="bg-gray-500 hover:bg-gray-600 text-white p-2 rounded-lg"
+                className="flex items-center gap-2 bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg"
                 title="Reset Timer"
               >
-                <RotateCcw size={20} />
+                <RotateCcw size={18} />
+                Reset
+              </button>
+
+              <button
+                onClick={handleRandomWinner}
+                className="flex items-center gap-2 bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded-lg"
+                title="Select Random Winner"
+              >
+                <Trophy size={18} />
+                Random
+              </button>
+
+              <button
+                onClick={handleEndMatch}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-lg"
+                title="End Match & Declare Winner by Votes"
+              >
+                <Clock size={18} />
+                End Match
               </button>
             </div>
           </div>
@@ -542,18 +935,24 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
         <div className="max-w-4xl w-full">
           {currentMatch.participant2 ? (
             <div className="grid grid-cols-3 gap-8 items-center">
-              {/* Participant 1 */}
+              {/* Participant 1 - Clickable to select winner */}
               <div className="text-center">
-                <div className="bg-white rounded-2xl shadow-xl p-8 mb-4">
-                  <ParticipantShape visualId={currentMatch.participant1!.visualId} size="xl" className="mx-auto mb-4" />
+                <button
+                  onClick={() => handleSelectWinner(currentMatch.participant1!.id)}
+                  className="w-full bg-white hover:bg-gray-50 border-4 border-gray-200 hover:border-blue-400 rounded-2xl shadow-xl p-8 mb-4 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl group"
+                >
+                  <ParticipantShape visualId={currentMatch.participant1!.visualId} size="xl" className="mx-auto mb-4 transform group-hover:scale-110 transition-transform duration-300" />
                   <h3 className="text-2xl font-bold text-gray-800 mb-2">{currentMatch.participant1!.name}</h3>
                   <div className="text-3xl font-bold text-blue-600 mb-2">
                     {getVoteCount(currentMatch.participant1!.id)}
                   </div>
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 mb-3">
                     {getVotePercentage(currentMatch.participant1!.id).toFixed(1)}% of votes
                   </div>
-                  <div className="mt-3 bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div className="text-blue-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-300 mb-3">
+                    Click to select winner!
+                  </div>
+                  <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
                     <div 
                       className="bg-blue-500 h-full transition-all duration-500"
                       style={{ width: `${getVotePercentage(currentMatch.participant1!.id)}%` }}
@@ -568,13 +967,13 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
                       <div>Total Votes: {totalVotes}</div>
                     </div>
                   )}
-                </div>
+                </button>
               </div>
 
-              {/* VS */}
+              {/* VS - Simplified center area */}
               <div className="text-center">
                 <div className="text-4xl font-black text-gray-500 mb-4">VS</div>
-                <div className="text-lg text-gray-600 mb-4">
+                <div className="text-lg text-gray-600 mb-6">
                   {isTimerActive && timeRemaining > 0 
                     ? '⏰ VOTING NOW!' 
                     : timeRemaining === 0 
@@ -582,14 +981,26 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
                     : '⏸️ PAUSED'
                   }
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
+                  {/* Large Back to Bracket Button */}
+                  <button
+                    onClick={() => onSetCurrentScreen('bracket')}
+                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white px-6 py-3 rounded-lg font-bold text-lg transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+                  >
+                    Back to Bracket
+                  </button>
+                  
                   <button
                     onClick={handleAdvanceMatch}
                     disabled={isAdvancing}
                     className="w-full bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isAdvancing ? 'Processing...' : 'Advance Match'}
+                    {isAdvancing ? 'Processing...' : 'Start Next Match'}
                   </button>
+                  
+                  <div className="text-sm text-gray-500 bg-gray-50 p-2 rounded">
+                    Or click on a participant above to manually select winner
+                  </div>
                   
                   {/* Debug refresh button in development */}
                   {process.env.NODE_ENV === 'development' && (
@@ -603,24 +1014,30 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
                 </div>
               </div>
 
-              {/* Participant 2 */}
+              {/* Participant 2 - Clickable to select winner */}
               <div className="text-center">
-                <div className="bg-white rounded-2xl shadow-xl p-8 mb-4">
-                  <ParticipantShape visualId={currentMatch.participant2!.visualId} size="xl" className="mx-auto mb-4" />
+                <button
+                  onClick={() => handleSelectWinner(currentMatch.participant2!.id)}
+                  className="w-full bg-white hover:bg-gray-50 border-4 border-gray-200 hover:border-red-400 rounded-2xl shadow-xl p-8 mb-4 transition-all duration-300 transform hover:scale-105 hover:shadow-2xl group"
+                >
+                  <ParticipantShape visualId={currentMatch.participant2!.visualId} size="xl" className="mx-auto mb-4 transform group-hover:scale-110 transition-transform duration-300" />
                   <h3 className="text-2xl font-bold text-gray-800 mb-2">{currentMatch.participant2!.name}</h3>
                   <div className="text-3xl font-bold text-red-600 mb-2">
                     {getVoteCount(currentMatch.participant2!.id)}
                   </div>
-                  <div className="text-sm text-gray-600">
+                  <div className="text-sm text-gray-600 mb-3">
                     {getVotePercentage(currentMatch.participant2!.id).toFixed(1)}% of votes
                   </div>
-                  <div className="mt-3 bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div className="text-red-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity duration-300 mb-3">
+                    Click to select winner!
+                  </div>
+                  <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
                     <div 
                       className="bg-red-500 h-full transition-all duration-500"
                       style={{ width: `${getVotePercentage(currentMatch.participant2!.id)}%` }}
                     />
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           ) : (
@@ -643,6 +1060,88 @@ const AnonymousActiveMatch: React.FC<AnonymousActiveMatchProps> = ({
           )}
         </div>
       </div>
+
+      {/* Current Round Matches Footer - Only show on larger screens */}
+      <div className="hidden lg:block bg-white border-t shadow-lg px-6 py-4">
+        <div className="max-w-6xl mx-auto">
+          <h3 className="text-lg font-bold text-gray-800 mb-3 text-center">
+            {formatRoundName(currentMatch.round, getMaxRounds(tournament.participants.length))} - All Matches
+          </h3>
+          <div className="flex flex-wrap justify-center gap-4">
+            {tournament.matches
+              .filter(m => m.round === currentMatch.round)
+              .map((match, index) => {
+                const isCurrent = match.id === currentMatch.id;
+                const isCompleted = match.status === 'completed';
+                
+                return (
+                  <div
+                    key={match.id}
+                    className={`px-4 py-2 rounded-lg border text-sm font-medium ${
+                      isCurrent 
+                        ? 'bg-purple-100 border-purple-300 text-purple-800' 
+                        : isCompleted
+                        ? 'bg-green-100 border-green-300 text-green-800'
+                        : 'bg-gray-100 border-gray-300 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {isCurrent && <span className="text-purple-600">▶️</span>}
+                      {isCompleted && <span className="text-green-600">✅</span>}
+                      {!isCurrent && !isCompleted && <span className="text-gray-400">⏸️</span>}
+                      
+                      <span>
+                        {match.participant1?.name || 'TBD'} vs {match.participant2?.name || 'TBD'}
+                      </span>
+                      
+                      {isCompleted && match.winner && (
+                        <span className="text-xs bg-green-200 text-green-800 px-2 py-1 rounded ml-2">
+                          Winner: {match.winner.name}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      </div>
+
+      {/* Winner Confirmation Modal */}
+      {showWinnerConfirm && selectedWinner && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-xl font-bold mb-4 text-black">Confirm Winner</h3>
+            <p className="mb-4 text-black">
+              Are you sure you want to declare{' '}
+              <strong className="text-black">
+                {currentMatch.participant1?.id === selectedWinner 
+                  ? currentMatch.participant1.name 
+                  : currentMatch.participant2?.name}
+              </strong>{' '}
+              as the winner?
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowWinnerConfirm(false);
+                  setSelectedWinner(null);
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmWinner}
+                disabled={isAdvancing}
+                className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded disabled:opacity-50"
+              >
+                {isAdvancing ? 'Processing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

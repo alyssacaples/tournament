@@ -1,225 +1,266 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { GameState, Tournament, Participant } from '@/types/tournament';
-import { createTournamentBracket } from '@/utils/tournament';
-import { supabase, generateTournamentCode, getActiveConnectionCount, logSupabaseOperation, testDatabaseConnection, createRobustSubscription, cleanupSubscription } from '@/utils/supabase';
-import { SHAPE_COLOR_COMBOS } from '@/data/constants';
-
-import AnonymousModeSetup from '@/components/interactive/AnonymousModeSetup';
+import { GameState, Participant } from '@/types/tournament';
+import { 
+  createTournament, 
+  generateRandomCode, 
+  setupTournament, 
+  findNextActiveMatch, 
+  getMaxRounds,
+  formatRoundName 
+} from '@/utils/tournament';
+import HomeScreen from '@/components/HomeScreen';
+import ParticipantSetup from '@/components/ParticipantSetup';
 import AnonymousTournamentBracket from '@/components/interactive/AnonymousTournamentBracket';
 import AnonymousActiveMatch from '@/components/interactive/AnonymousActiveMatch';
+import { supabase, createTournamentInDB, logSupabaseOperation, createRobustSubscription, cleanupSubscription } from '@/utils/supabase';
+import { Users, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 
-type Screen = 'setup' | 'bracket' | 'match' | 'home';
-
-export default function AnonymousHostPage() {
-  const router = useRouter();
-  const [currentScreen, setCurrentScreen] = useState<Screen>('setup');
+const AnonymousHostPage: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
-    tournament: null,
-    mode: 'anonymous',
-    timerRemaining: 0,
-    isTimerActive: false
+    currentScreen: 'home'
   });
   const [tournamentCode, setTournamentCode] = useState<string>('');
-  const [connectedVoters, setConnectedVoters] = useState<number>(0);
+  const [connectedVoters, setConnectedVoters] = useState(0);
+  const [isConnected, setIsConnected] = useState(true);
 
-  // Load connection count with enhanced method
+  // Setup tournament code when hosting starts
   useEffect(() => {
-    if (!gameState.tournament?.id) return;
+    if (gameState.currentScreen === 'setup' && !tournamentCode) {
+      const code = generateRandomCode();
+      setTournamentCode(code);
+    }
+  }, [gameState.currentScreen, tournamentCode]);
 
-    const loadConnectionCount = async () => {
-      try {
-        logSupabaseOperation('Connection Count Load - Start', { tournamentId: gameState.tournament!.id });
-        const count = await getActiveConnectionCount(gameState.tournament!.id);
-        setConnectedVoters(count);
-        logSupabaseOperation('Connection Count Load - Success', { count });
-      } catch (err) {
-        logSupabaseOperation('Connection Count Load', { tournamentId: gameState.tournament!.id }, err);
-      }
+  // Monitor connection status
+  useEffect(() => {
+    const checkConnection = () => {
+      setIsConnected(navigator.onLine);
     };
 
-    // Load initial count
-    loadConnectionCount();
-
-    // Set up periodic refresh as fallback
-    const fallbackInterval = setInterval(loadConnectionCount, 5000); // Every 5 seconds for better responsiveness
-
-    // Subscribe to connection changes using robust subscription
-    const channel = createRobustSubscription(
-      `connections-${gameState.tournament.id}`,
-      'connections',
-      `tournament_id=eq.${gameState.tournament.id}`,
-      (payload) => {
-        logSupabaseOperation('Real-time Connection Change', payload);
-        // Immediate update
-        loadConnectionCount();
-      },
-      (status) => {
-        logSupabaseOperation('Real-time Connection Subscription Status', { 
-          status, 
-          tournamentId: gameState.tournament!.id 
-        });
-      }
-    );
+    window.addEventListener('online', checkConnection);
+    window.addEventListener('offline', checkConnection);
+    checkConnection();
 
     return () => {
-      clearInterval(fallbackInterval);
-      cleanupSubscription(channel, `connections-${gameState.tournament?.id || 'unknown'}`);
+      window.removeEventListener('online', checkConnection);
+      window.removeEventListener('offline', checkConnection);
     };
-  }, [gameState.tournament?.id]);
+  }, []);
 
-  const handleCreateTournament = async (name: string, participantNames: string[], seeded: boolean) => {
+  // Subscribe to connected voters count
+  useEffect(() => {
+    if (!tournamentCode) return;
+
+    let voterSubscription: any;
+
+    const setupVoterSubscription = async () => {
+      try {
+        voterSubscription = createRobustSubscription(
+          supabase
+            .channel(`voters_${tournamentCode}`)
+            .on('postgres_changes', 
+              { 
+                event: '*', 
+                schema: 'public', 
+                table: 'tournament_voters',
+                filter: `tournament_code=eq.${tournamentCode}`
+              }, 
+              async () => {
+                try {
+                  const { data, error } = await supabase
+                    .from('tournament_voters')
+                    .select('*')
+                    .eq('tournament_code', tournamentCode);
+
+                  if (error) {
+                    console.error('Error fetching voters:', error);
+                    return;
+                  }
+
+                  const activeVoters = data?.filter(voter => 
+                    new Date(voter.last_seen).getTime() > Date.now() - 30000
+                  ) || [];
+                  
+                  setConnectedVoters(activeVoters.length);
+                } catch (err) {
+                  console.error('Error in voter subscription:', err);
+                }
+              }
+            ),
+          `voters_${tournamentCode}`,
+          () => setupVoterSubscription()
+        );
+
+        // Initial count
+        const { data, error } = await supabase
+          .from('tournament_voters')
+          .select('*')
+          .eq('tournament_code', tournamentCode);
+
+        if (!error && data) {
+          const activeVoters = data.filter(voter => 
+            new Date(voter.last_seen).getTime() > Date.now() - 30000
+          );
+          setConnectedVoters(activeVoters.length);
+        }
+
+      } catch (error) {
+        console.error('Error setting up voter subscription:', error);
+      }
+    };
+
+    setupVoterSubscription();
+
+    return () => {
+      if (voterSubscription) {
+        cleanupSubscription(voterSubscription, `voters_${tournamentCode}`);
+      }
+    };
+  }, [tournamentCode]);
+
+  const handleStartTournament = async (participants: Participant[]) => {
     try {
-      logSupabaseOperation('Create Tournament - Start', { name, participantCount: participantNames.length });
+      const tournament = createTournament(participants);
+      const setupResult = setupTournament(tournament);
       
-      // Test database connection first
-      const isConnected = await testDatabaseConnection();
-      if (!isConnected) {
-        alert('Unable to connect to tournament server. Please check your internet connection and try again.');
-        return;
-      }
-
-      // Create participants with visual IDs
-      const participants: Participant[] = participantNames.map((name, index) => ({
-        id: `participant-${Date.now()}-${index}`,
-        name: name.trim(),
-        visualId: index % SHAPE_COLOR_COMBOS.length
-      }));
-
-      // Generate tournament code
-      const code = generateTournamentCode();
-      logSupabaseOperation('Tournament Code Generated', { code });
+      // Create tournament in database
+      await createTournamentInDB(tournamentCode, setupResult, participants);
       
-      // Create bracket
-      const matches = createTournamentBracket(participants, seeded);
-
-      // Create tournament object
-      const tournament: Tournament = {
-        id: '', // Will be set by database
-        name: name.trim(),
+      const nextMatch = findNextActiveMatch(setupResult);
+      
+      setGameState({
+        currentScreen: nextMatch ? 'match' : 'bracket',
         participants,
-        matches,
-        currentRound: 1,
-        currentMatch: null,
-        status: 'active',
-        roundDuration: 120,
-        seeded
-      };
+        tournament: {
+          ...setupResult,
+          currentMatch: nextMatch
+        }
+      });
 
-      // Save to database
-      const { data, error } = await supabase
-        .from('tournaments')
-        .insert({
-          code,
-          name: tournament.name,
-          mode: 'anonymous',
-          status: 'active',
-          participants: tournament.participants,
-          matches: tournament.matches,
-          current_round: tournament.currentRound,
-          current_match_id: null,
-          round_duration: tournament.roundDuration,
-          max_participants: participants.length,
-          timer_active: false,
-          timer_remaining: tournament.roundDuration,
-          timer_started_at: null,
-          timer_duration: tournament.roundDuration,
-          host_last_seen: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) {
-        logSupabaseOperation('Create Tournament', tournament, error);
-        alert('Failed to create tournament. Please try again.');
-        return;
-      }
-
-      logSupabaseOperation('Create Tournament - Success', data);
-
-      // Update tournament with database ID
-      tournament.id = data.id;
-      setTournamentCode(code);
-
-      // Update game state
-      setGameState(prev => ({
-        ...prev,
-        tournament
-      }));
-
-      // Move to bracket view
-      setCurrentScreen('bracket');
+      await logSupabaseOperation('Tournament started', {
+        code: tournamentCode,
+        participantCount: participants.length,
+        totalRounds: getMaxRounds(participants.length)
+      });
 
     } catch (error) {
-      logSupabaseOperation('Create Tournament', { name, participantNames }, error);
-      alert('Failed to create tournament. Please try again.');
+      console.error('Error starting tournament:', error);
+      alert('Failed to start tournament. Please try again.');
     }
   };
 
-  const handleGoHome = () => {
-    if (confirm('Are you sure you want to end this tournament and return home?')) {
-      router.push('/');
+  const handleSetCurrentScreen = (screen: 'home' | 'setup' | 'bracket' | 'match') => {
+    setGameState(prev => ({ ...prev, currentScreen: screen }));
+  };
+
+  const renderCurrentScreen = () => {
+    switch (gameState.currentScreen) {
+      case 'home':
+        return (
+          <HomeScreen 
+            onStartLocal={() => handleSetCurrentScreen('setup')}
+            onStartTest={() => handleSetCurrentScreen('setup')}
+          />
+        );
+        
+      case 'setup':
+        return (
+          <ParticipantSetup 
+            onCreateTournament={(name, participantNames) => {
+              const participants = participantNames.map((name, index) => ({
+                id: `participant-${index}`,
+                name,
+                visualId: index % 20 // Using constants length
+              }));
+              handleStartTournament(participants);
+            }}
+            onBack={() => handleSetCurrentScreen('home')}
+          />
+        );
+        
+      case 'bracket':
+        return (
+          <AnonymousTournamentBracket
+            gameState={gameState}
+            onUpdateGameState={setGameState}
+            onSetCurrentScreen={handleSetCurrentScreen}
+            tournamentCode={tournamentCode}
+          />
+        );
+        
+      case 'match':
+        return (
+          <AnonymousActiveMatch
+            gameState={gameState}
+            onUpdateGameState={setGameState}
+            onSetCurrentScreen={handleSetCurrentScreen}
+            tournamentCode={tournamentCode}
+            connectedVoters={connectedVoters}
+          />
+        );
+        
+      default:
+        return null;
     }
   };
 
-  const handleGoToSetup = () => {
-    if (confirm('Are you sure you want to restart tournament setup? This will end the current tournament.')) {
-      setGameState(prev => ({
-        ...prev,
-        tournament: null
-      }));
-      setCurrentScreen('setup');
-    }
-  };
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
+      <div className="container mx-auto px-4 py-8">
+        {/* Header with tournament info */}
+        {(gameState.currentScreen === 'setup' || gameState.currentScreen === 'bracket' || gameState.currentScreen === 'match') && (
+          <div className="mb-6">
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="text-white">
+                    <h2 className="text-xl font-bold">Tournament Host</h2>
+                    <p className="text-white/80">Code: <span className="font-mono text-yellow-300 text-lg">{tournamentCode}</span></p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center space-x-6">
+                  <div className="flex items-center space-x-2 text-white">
+                    <Users size={20} />
+                    <span className="font-semibold">{connectedVoters}</span>
+                    <span className="text-white/80">voters</span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    {isConnected ? (
+                      <Wifi className="text-green-400" size={20} />
+                    ) : (
+                      <WifiOff className="text-red-400" size={20} />
+                    )}
+                    <span className={`text-sm ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                      {isConnected ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
-  const updateGameState = (updater: (prev: GameState) => GameState) => {
-    setGameState(updater);
-  };
+        {/* Main content */}
+        {renderCurrentScreen()}
 
-  const setCurrentScreenHandler = (screen: 'setup' | 'bracket' | 'match' | 'home') => {
-    if (screen === 'home') {
-      handleGoHome();
-      return;
-    }
-    setCurrentScreen(screen);
-  };
+        {/* Instructions for voters */}
+        {(gameState.currentScreen === 'setup' || gameState.currentScreen === 'bracket' || gameState.currentScreen === 'match') && (
+          <div className="mt-8">
+            <div className="bg-white/5 backdrop-blur-sm rounded-xl p-4 border border-white/10">
+              <h3 className="text-white font-semibold mb-2">For Voters:</h3>
+              <p className="text-white/80 text-sm">
+                Go to <span className="font-mono bg-white/10 px-2 py-1 rounded">{window.location.origin}/anonymous/vote</span> and enter code: <span className="font-mono text-yellow-300 font-bold">{tournamentCode}</span>
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
-  if (currentScreen === 'setup') {
-    return (
-      <AnonymousModeSetup
-        onCreateTournament={handleCreateTournament}
-        onBack={handleGoHome}
-      />
-    );
-  }
-
-  if (currentScreen === 'bracket') {
-    return (
-      <AnonymousTournamentBracket
-        gameState={gameState}
-        onUpdateGameState={updateGameState}
-        onSetCurrentScreen={setCurrentScreenHandler}
-        onGoHome={handleGoHome}
-        onGoToSetup={handleGoToSetup}
-        tournamentCode={tournamentCode}
-        connectedVoters={connectedVoters}
-      />
-    );
-  }
-
-  if (currentScreen === 'match') {
-    return (
-      <AnonymousActiveMatch
-        gameState={gameState}
-        onUpdateGameState={updateGameState}
-        onSetCurrentScreen={setCurrentScreenHandler}
-        tournamentCode={tournamentCode}
-        connectedVoters={connectedVoters}
-      />
-    );
-  }
-
-  return null;
-}
+export default AnonymousHostPage;

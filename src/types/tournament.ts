@@ -23,19 +23,17 @@ export interface Tournament {
   currentMatch: Match | null;
   status: 'setup' | 'active' | 'completed';
   roundDuration: number; // in seconds
-  seeded: boolean; // Whether tournament uses seeding (participant order = seed rank)
-  // Timer state for synchronized voting
   timerActive?: boolean;
   timerRemaining?: number;
-  timerStartedAt?: string;
-  timerDuration?: number;
 }
 
 export interface GameState {
+  currentScreen?: 'home' | 'setup' | 'bracket' | 'match';
   tournament: Tournament | null;
-  mode: 'local' | 'test' | 'anonymous' | 'participant';
-  timerRemaining: number;
-  isTimerActive: boolean;
+  participants?: Participant[];
+  mode?: 'local' | 'test' | 'anonymous' | 'participant';
+  timerRemaining?: number;
+  isTimerActive?: boolean;
 }
 
 export interface ShapeColorCombo {
