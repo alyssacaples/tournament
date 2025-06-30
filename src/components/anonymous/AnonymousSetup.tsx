@@ -5,15 +5,15 @@ import { ArrowLeft, Users, Plus } from 'lucide-react';
 import { parseParticipantInput, createParticipants } from '@/utils/tournament';
 import { Participant } from '@/types/tournament';
 
-interface ParticipantSetupProps {
+interface AnonymousSetupProps {
   onCreateTournament: (name: string, participants: Participant[], seeded: boolean) => void;
   onBack: () => void;
 }
 
-const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament, onBack }) => {
+const AnonymousSetup: React.FC<AnonymousSetupProps> = ({ onCreateTournament, onBack }) => {
   const [tournamentName, setTournamentName] = useState('');
-  const [participantInput, setParticipantInput] = useState('');
-  const [participantCount, setParticipantCount] = useState(8);
+  const [participantInput, setAnonymousInput] = useState('');
+  const [participantCount, setAnonymousCount] = useState(8);
   const [inputMode, setInputMode] = useState<'paste' | 'count'>('paste');
   const [seeded, setSeeded] = useState(false);
 
@@ -115,7 +115,7 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
               </label>
               <textarea
                 value={participantInput}
-                onChange={(e) => setParticipantInput(e.target.value)}
+                onChange={(e) => setAnonymousInput(e.target.value)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 h-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter participant names separated by commas, spaces, or new lines..."
               />
@@ -136,7 +136,7 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
                 min="2"
                 max="32"
                 value={participantCount}
-                onChange={(e) => setParticipantCount(parseInt(e.target.value) || 2)}
+                onChange={(e) => setAnonymousCount(parseInt(e.target.value) || 2)}
                 className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="mt-2 text-sm text-gray-600">
@@ -179,4 +179,4 @@ const ParticipantSetup: React.FC<ParticipantSetupProps> = ({ onCreateTournament,
   );
 };
 
-export default ParticipantSetup;
+export default AnonymousSetup;

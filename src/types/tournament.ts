@@ -16,6 +16,7 @@ export interface Match {
 
 export interface Tournament {
   id: string;
+  code?: string; // Unique code for joining the tournament (for anonymous mode)
   name: string;
   participants: Participant[];
   matches: Match[];
@@ -24,6 +25,8 @@ export interface Tournament {
   status: 'setup' | 'active' | 'completed';
   roundDuration: number; // in seconds
   seeded: boolean; // Whether tournament uses seeding (participant order = seed rank)
+  maxVoters?: number; // For anonymous voting mode
+  lastMatchWinner?: Participant | null; // For winner celebration display
 }
 
 export interface GameState {

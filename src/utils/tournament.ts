@@ -14,6 +14,15 @@ export function getNextPowerOfTwo(num: number): number {
   return Math.pow(2, Math.ceil(Math.log2(num)));
 }
 
+// Convert participant names to Participant objects
+export function createParticipants(participantNames: string[]): Participant[] {
+  return participantNames.map((name, index) => ({
+    id: `participant-${index}`,
+    name: name,
+    visualId: index % SHAPE_COLOR_COMBOS.length // This ensures we cycle through available shapes
+  }));
+}
+
 export function createTournamentBracket(participants: Participant[], seeded: boolean = false): Match[] {
   if (participants.length < 2) {
     throw new Error('At least 2 participants required');
@@ -124,13 +133,63 @@ export function parseParticipantInput(input: string): string[] {
 }
 
 export function getNextMatch(matches: Match[], currentRound: number): Match | null {
-  // Find next pending match in current round that has at least one participant
-  const currentRoundMatches = matches.filter(m => 
+  // First, try to find next pending match in current round that has at least one participant
+  let currentRoundMatches = matches.filter(m => 
     m.round === currentRound && 
     m.status === 'pending' && 
     (m.participant1 || m.participant2) // Must have at least one participant
   );
-  return currentRoundMatches[0] || null;
+  
+  if (currentRoundMatches.length > 0) {
+    return currentRoundMatches[0];
+  }
+  
+  // If no matches in current round, check if current round is complete
+  // and look for next round with available matches
+  const isCurrentRoundComplete = isRoundComplete(matches, currentRound);
+  
+  if (isCurrentRoundComplete) {
+    // Look for next round with available matches
+    const allRounds = Array.from(new Set(matches.map(m => m.round))).sort((a, b) => a - b);
+    const maxRound = Math.max(...allRounds);
+    
+    for (let round = currentRound + 1; round <= maxRound; round++) {
+      const roundMatches = matches.filter(m => 
+        m.round === round && 
+        m.status === 'pending' && 
+        (m.participant1 || m.participant2)
+      );
+      
+      if (roundMatches.length > 0) {
+        return roundMatches[0];
+      }
+    }
+  }
+  
+  return null;
+}
+
+export function getCurrentRound(matches: Match[]): number {
+  // Find the current round by looking for the earliest round with pending matches
+  const allRounds = Array.from(new Set(matches.map(m => m.round))).sort((a, b) => a - b);
+  
+  for (const round of allRounds) {
+    const roundMatches = matches.filter(m => m.round === round);
+    const hasPendingMatches = roundMatches.some(m => 
+      m.status === 'pending' && (m.participant1 || m.participant2)
+    );
+    
+    if (hasPendingMatches) {
+      return round;
+    }
+  }
+  
+  // If no pending matches, return the highest round with completed matches
+  const completedRounds = matches
+    .filter(m => m.status === 'completed')
+    .map(m => m.round);
+    
+  return completedRounds.length > 0 ? Math.max(...completedRounds) : 1;
 }
 
 export function advanceWinner(matches: Match[], completedMatch: Match): Match[] {
