@@ -2,23 +2,28 @@ import React from 'react';
 import { SHAPE_COLOR_COMBOS } from '@/data/constants';
 
 interface ParticipantShapeProps {
-  visualId: number;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  visualId?: number;
+  shape?: number;
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl';
   className?: string;
 }
 
 const ParticipantShape: React.FC<ParticipantShapeProps> = ({ 
-  visualId, 
+  visualId = 0, 
+  shape,
   size = 'md', 
   className = '' 
 }) => {
-  const combo = SHAPE_COLOR_COMBOS[visualId % SHAPE_COLOR_COMBOS.length];
+  // Use either the shape or visualId prop
+  const shapeIndex = shape !== undefined ? shape : visualId;
+  const combo = SHAPE_COLOR_COMBOS[shapeIndex % SHAPE_COLOR_COMBOS.length];
   
   const sizeClasses = {
     sm: 'w-6 h-6',
     md: 'w-8 h-8',
     lg: 'w-12 h-12',
-    xl: 'w-16 h-16'
+    xl: 'w-16 h-16',
+    xxl: 'w-24 h-24'
   };
   
   const baseClasses = `${sizeClasses[size]} ${className}`;

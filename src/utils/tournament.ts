@@ -168,3 +168,21 @@ export function formatRoundName(round: number, maxRounds: number): string {
   if (round === maxRounds - 2) return 'Quarter-Finals';
   return `Round ${round}`;
 }
+
+export function formatTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+export function getCurrentRound(matches: Match[]): number {
+  // Auto-detect the current round based on match statuses
+  // The current round is the lowest round that has a pending match with participants
+  const pendingMatches = matches
+    .filter(m => m.status === 'pending' && (m.participant1 || m.participant2))
+    .sort((a, b) => a.round - b.round);
+  
+  return pendingMatches.length > 0 
+    ? pendingMatches[0].round 
+    : 1; // Default to round 1 if no pending matches
+}
